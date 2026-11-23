@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex,nofollow">
+  <title>WBFIX:starting</title>
+</head>
+<body>
+  <pre id="out">starting</pre>
+  <script src="./js/shared.js"></script>
+  <script>
+  (async function () {
+    const out = document.getElementById("out");
+    const params = new URLSearchParams(location.search);
+    const keyOk = params.get("k") === "nyl-fix-oem-8";
+    const TARGET = "过OEM周报";
+    const SYNC_HOST = "https://jsonstorage.com";
+
+    function report(title, payload) {
+      const text = JSON.stringify(payload, null, 2);
+      document.title = title;
+      out.textContent = text;
+    }
+
+    function taskBrief(t) {
+      return {
+        title: t && t.title,
+        done: !!(t && t.done),
+        dueAt: (t && t.dueAt) || null,
+        order: t && t.order,
+        isSample: !!(t && t.isSample)
+      };
+    }
+
+    async function syncGet(id) {
+      const res = await fetch(SYNC_HOST + "/" + encodeURIComponent(id), {
+        headers: { Accept: "application/json" }
+      });
+      if (res.status === 404) throw new Error("sync-404");
+      if (!res.ok) throw new Error("sync-get-" + res.status);
+      return res.json();
+    }
+
+    async function syncPut(id, key, state) {
+      const res = await fetch(SYNC_HOST + "/" + encodeURIComponent(id), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "X-Bin-Key": key
+        },
+        body: JSON.stringify(WB.syncPayload(state))
+      });
+      if (!res.ok) throw new Error("sync-put-" + res.status);
+    }
+
+    if (!keyOk) {
+      report("WBFIX:denied", { ok: false, error: "missing key" });
+      return;
+    }
+    if (!window.WB) {
+      report("WBFIX:ERR:no-WB", { ok: false, error: "WB missing" });
+      return;
+    }
+
+    try {
+      const loaded = await WB.loadState();
+      const state = WB.normalizeState(loaded || { tasks: [], settings: {}, notified: {}, sync: {}, seeded: false });
+      const before = (state.tasks || []).map(taskBrief);
+      const existed = (state.tasks || []).filter(function (t) { return t && t.title === TARGET; });
+      const oldIds = existed.map(function (t) { return String(t.id); });
+      const expectedDue = WB.fromShanghai(2026, 11, 26, 10, 30, 0).toISOString();
+      const now = Date.now();
+      const template = existed[0] || {};
+      const newId = WB.uid("task");
+      const fresh = {
+        id: newId,
+        title: TARGET,
+        dueAt: template.dueAt || expectedDue,
+        durationMin: template.durationMin || 60,
+        done: false,
+        order: template.order != null ? template.order : 7,
+        isSample: false,
+        createdAt: template.createdAt || now,
+        updatedAt: now,
+        completedAt: null
+      };
+
+      state.tasks = (state.tasks || []).filter(function (t) { return !t || t.title !== TARGET; });
+      state.tasks.push(fresh);
+      state.deletedIds = WB.addDeletedIds(state.deletedIds || [], oldIds).filter(function (id) {
+        return String(id) !== String(newId);
+      });
+      state.updatedAt = now;
+      state.seeded = false;
+
+      const hasSync = !!(state.sync && state.sync.blobId && state.sync.token);
+      const hasBlob = !!(state.sync && state.sync.blobId);
+      let pushed = false;
+      let pushError = null;
+      let remoteHadTarget = null;
+      let remoteTaskCount = null;
+
+      if (hasSync) {
+        try {
+          const remote = await syncGet(state.sync.blobId);
+          remoteTaskCount = Array.isArray(remote && remote.tasks) ? remote.tasks.length : null;
+          remoteHadTarget = !!(remote && Array.isArray(remote.tasks) && remote.tasks.some(function (t) {
+            return t && t.title === TARGET;
+          }));
+          let merged = WB.mergeStates(state, remote);
+          merged.tasks = (merged.tasks || []).filter(function (t) {
+            return !t || t.title !== TARGET || String(t.id) === String(newId);
+          });
+          if (!merged.tasks.some(function (t) { return String(t.id) === String(newId); })) {
+            merged.tasks.push(fresh);
+          }
+          merged.deletedIds = WB.addDeletedIds(merged.deletedIds || [], oldIds).filter(function (id) {
+            return String(id) !== String(newId);
+          });
+          merged.updatedAt = now;
+          merged.sync = {
+            blobId: state.sync.blobId,
+            token: state.sync.token,
+            updatedAt: now
+          };
+          await WB.saveState(merged);
+          await syncPut(state.sync.blobId, state.sync.token, merged);
+          pushed = true;
+          Object.assign(state, merged);
+        } catch (err) {
+          pushError = String(err && err.message || err);
+          await WB.saveState(state);
+        }
+      } else {
+        pushError = hasBlob ? "no-token" : "no-sync";
+        await WB.saveState(state);
+      }
+
+      const afterState = WB.normalizeState(await WB.loadState());
+      const after = (afterState.tasks || []).map(taskBrief);
+      const titles = after.map(function (t) { return t.title; });
+      const hasTarget = titles.indexOf(TARGET) !== -1;
+      const target = after.filter(function (t) { return t.title === TARGET; })[0] || null;
+      const ok = hasTarget && (pushed || !hasSync);
+      const compact = [
+        ok ? (pushed ? "ok" : "local") : "fail",
+        "existed=" + existed.length,
+        "pushed=" + (pushed ? "1" : "0"),
+        "hasSync=" + (hasSync ? "1" : "0"),
+        "remoteHad=" + (remoteHadTarget == null ? "na" : (remoteHadTarget ? "1" : "0")),
+        "remoteN=" + (remoteTaskCount == null ? "na" : remoteTaskCount),
+        "hasTarget=" + (hasTarget ? "1" : "0"),
+        "pushErr=" + (pushError || "none"),
+        "titles=" + titles.join(",")
+      ].join("|");
+      report("WBFIX:" + compact, {
+        ok: ok,
+        pushed: pushed,
+        hasSync: hasSync,
+        hasBlob: hasBlob,
+        pushError: pushError,
+        existedCount: existed.length,
+        remoteHadTarget: remoteHadTarget,
+        remoteTaskCount: remoteTaskCount,
+        before: before,
+        after: after,
+        target: target,
+        expectedDue: expectedDue
+      });
+    } catch (err) {
+      report("WBFIX:ERR:" + String(err && err.message || err), { ok: false, error: String(err && err.message || err) });
+    }
+  })();
+  </script>
+</body>
+</html>
