@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex,nofollow">
+  <title>WBCHECK:starting</title>
+</head>
+<body>
+  <pre id="out">starting</pre>
+  <script src="./js/shared.js"></script>
+  <script>
+  (async function () {
+    const out = document.getElementById("out");
+    function report(title, payload) {
+      document.title = title;
+      out.textContent = JSON.stringify(payload, null, 2);
+    }
+    if (!window.WB) {
+      report("WBCHECK:ERR:no-WB", { ok: false, error: "WB missing" });
+      return;
+    }
+    try {
+      const official = [
+        "线索集中墨城州", "调研墨支付代理", "启动膨胀券专项", "周更三条视频",
+        "周三业务周会", "整理周例会材料", "提醒叶启刚写周报", "过OEM周报", "周一投放测试"
+      ];
+      let state = WB.normalizeState(
+        (await WB.loadState()) || { tasks: [], settings: {}, notified: {}, sync: {}, seeded: false }
+      );
+      const before = (state.tasks || []).map(function (t) {
+        return { title: t.title, isSample: !!t.isSample, done: !!t.done, dueAt: t.dueAt || null, order: t.order };
+      });
+      const titleCountsBefore = {};
+      before.forEach(function (t) {
+        titleCountsBefore[t.title] = (titleCountsBefore[t.title] || 0) + 1;
+      });
+      const dupTitlesBefore = Object.keys(titleCountsBefore).filter(function (t) {
+        return titleCountsBefore[t] > 1;
+      });
+      const samplesBefore = before.filter(function (t) { return t.isSample; }).length;
+      let changed = false;
+
+      const noSamples = (state.tasks || []).filter(function (t) { return !t.isSample; });
+      if (noSamples.length !== (state.tasks || []).length) {
+        state.tasks = noSamples;
+        state.seeded = false;
+        changed = true;
+      }
+
+      const seen = {};
+      const deduped = [];
+      const removed = [];
+      state.tasks.forEach(function (t) {
+        if (seen[t.title]) {
+          removed.push(t.title);
+          changed = true;
+          return;
+        }
+        seen[t.title] = true;
+        deduped.push(t);
+      });
+      state.tasks = deduped;
+
+      if (changed) {
+        await WB.saveState(state);
+        state = WB.normalizeState(await WB.loadState());
+      }
+
+      const after = (state.tasks || []).map(function (t) {
+        return {
+          title: t.title,
+          isSample: !!t.isSample,
+          done: !!t.done,
+          dueAt: t.dueAt || null,
+          order: t.order,
+          durationMin: t.durationMin,
+          completedAt: t.completedAt || null
+        };
+      });
+      const titles = after.map(function (t) { return t.title; });
+      const samplesAfter = after.filter(function (t) { return t.isSample; }).length;
+      const missing = official.filter(function (t) { return titles.indexOf(t) < 0; });
+      const byTitle = {};
+      after.forEach(function (t) { byTitle[t.title] = t; });
+      const task9 = byTitle["周一投放测试"] || null;
+      const timed = {
+        "周三业务周会": WB.fromShanghai(2026, 11, 25, 10, 30, 0).toISOString(),
+        "整理周例会材料": WB.fromShanghai(2026, 11, 25, 16, 0, 0).toISOString(),
+        "提醒叶启刚写周报": WB.fromShanghai(2026, 11, 25, 10, 30, 0).toISOString(),
+        "过OEM周报": WB.fromShanghai(2026, 11, 26, 10, 30, 0).toISOString()
+      };
+      const dueOk = official.slice(4, 8).every(function (title) {
+        return byTitle[title] && byTitle[title].dueAt === timed[title];
+      });
+      const uniqueOfficial = official.filter(function (t) { return titles.indexOf(t) >= 0; }).length;
+      const ok = missing.length === 0 && samplesAfter === 0 && uniqueOfficial === 9 && titles.length === new Set(titles).size && dueOk && !!(task9 && task9.done);
+      const compact = [
+        ok ? "ok" : "fail",
+        "total=" + after.length,
+        "samples=" + samplesAfter,
+        "dups=" + dupTitlesBefore.length,
+        "removed=" + removed.length,
+        "missing=" + missing.length,
+        "done9=" + (task9 && task9.done ? "1" : "0"),
+        "dueOk=" + (dueOk ? "1" : "0"),
+        "titles=" + titles.join(",")
+      ].join("|");
+      report("WBCHECK:" + compact, {
+        ok: ok,
+        beforeCount: before.length,
+        afterCount: after.length,
+        samplesBefore: samplesBefore,
+        samplesAfter: samplesAfter,
+        dupTitlesBefore: dupTitlesBefore,
+        titleCountsBefore: titleCountsBefore,
+        removed: removed,
+        missing: missing,
+        after: after,
+        saved: changed,
+        seeded: state.seeded
+      });
+    } catch (err) {
+      report("WBCHECK:ERR:" + String(err && err.message || err), { ok: false, error: String(err && err.message || err) });
+    }
+  })();
+  </script>
+</body>
+</html>
