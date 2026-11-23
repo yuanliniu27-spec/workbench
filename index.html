@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#e8f6e3" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="工作台" />
+  <meta name="description" content="元丽的工作台：记下任务、按优先级排序，并在开始/完成时间前提醒。" />
+  <title>工作台</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="side">
+      <div class="brand">工作台</div>
+      <div class="sub">随时记下，按优先级推进</div>
+      <nav class="nav" id="desk-nav">
+        <button type="button" data-filter="todo" class="active">今日<span id="nav-todo">0</span></button>
+        <button type="button" data-filter="all">全部<span id="nav-all">0</span></button>
+        <button type="button" data-filter="done">已完成<span id="nav-done">0</span></button>
+      </nav>
+      <div class="rest" id="rest-summary"></div>
+      <div class="side-foot">
+        <button type="button" id="open-settings-desk">设置与使用说明</button>
+      </div>
+    </aside>
+
+    <section class="main">
+      <header class="mobile-hero">
+        <div class="hero-row">
+          <div>
+            <div class="date" id="date-line-mobile"></div>
+            <div class="hello" id="hello"></div>
+          </div>
+          <button type="button" class="icon-btn" id="open-settings-mobile" aria-label="设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="stats" id="stats"></div>
+      </header>
+
+      <header class="desk-hero">
+        <div class="main-top">
+          <h1 id="desk-title">今日待办</h1>
+          <div class="hint" id="date-line-desk"></div>
+        </div>
+      </header>
+
+      <div class="sample-banner" id="sample-banner" hidden>
+        <div>下面是<strong>示例任务</strong>，可随时删除或改成你的真实待办。</div>
+        <div class="banner-actions">
+          <button type="button" class="mini-btn ghost" id="clear-samples">删除全部示例</button>
+        </div>
+      </div>
+
+      <div class="notify-banner" id="notify-banner" hidden>
+        <div><b>打开通知</b>后，到点会在这台设备上提醒你。需使用 HTTPS，并建议添加到主屏幕。</div>
+        <div class="banner-actions">
+          <button type="button" class="mini-btn" id="enable-notify">允许通知</button>
+          <button type="button" class="mini-btn ghost" id="dismiss-notify">稍后</button>
+        </div>
+      </div>
+
+      <div class="install-banner" id="install-banner" hidden>
+        <div><b>添加到主屏幕</b>后，提醒更稳，也能当独立应用打开。</div>
+        <div class="banner-actions">
+          <button type="button" class="mini-btn" id="install-btn">添加</button>
+          <button type="button" class="mini-btn ghost" id="dismiss-install">好的</button>
+        </div>
+      </div>
+
+      <div class="filters mobile-only" id="filters">
+        <button type="button" class="filter active" data-filter="todo">待办<em id="f-todo">0</em></button>
+        <button type="button" class="filter" data-filter="all">全部<em id="f-all">0</em></button>
+        <button type="button" class="filter" data-filter="done">已完成<em id="f-done">0</em></button>
+      </div>
+
+      <button type="button" class="quick" id="quick-add">
+        <span class="plus">+</span>
+        <span>记下刚布置的任务，主题会自动压到 10 个字以内</span>
+      </button>
+
+      <div class="sec-head">
+        <h2 id="list-heading">按优先级排列</h2>
+        <span id="list-hint">按住左侧拖动排序</span>
+      </div>
+      <div class="list" id="task-list"></div>
+    </section>
+
+    <aside class="rail">
+      <h2>即将提醒</h2>
+      <div id="remind-list"></div>
+      <div class="timeline">
+        <h2>今日时间安排</h2>
+        <div id="timeline-list"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="overlay" id="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3 id="editor-title">记下任务</h3>
+      <form id="task-form" autocomplete="off">
+        <input type="hidden" id="task-id" />
+        <div class="field">
+          <label for="title-input">主题 <span class="count" id="title-count">0/10</span></label>
+          <input id="title-input" type="text" maxlength="20" required placeholder="精简到 10 个字以内" />
+          <div class="hint-text">标题会加粗放大显示，请压到 10 个汉字以内。</div>
+        </div>
+        <div class="field">
+          <label>开始/完成时间</label>
+          <label class="check-row"><input type="checkbox" id="pending-check" /> 待定（先记下，稍后补时间）</label>
+          <div class="row-2" id="when-fields">
+            <input type="date" id="due-date" />
+            <input type="time" id="due-time" />
+          </div>
+          <div class="hint-text">这是同一个时间，不是开始和完成两个时间。按上海时间填写。</div>
+        </div>
+        <div class="field">
+          <label>预计耗时</label>
+          <div class="row-2">
+            <input type="number" id="dur-value" min="1" step="1" value="60" />
+            <select id="dur-unit">
+              <option value="min">分钟</option>
+              <option value="hour" selected>小时</option>
+            </select>
+          </div>
+          <div class="dur-chips" id="dur-chips">
+            <button type="button" data-min="15">15 分钟</button>
+            <button type="button" data-min="25">25 分钟</button>
+            <button type="button" data-min="40">40 分钟</button>
+            <button type="button" data-min="60">1 小时</button>
+            <button type="button" data-min="90">1.5 小时</button>
+            <button type="button" data-min="120">2 小时</button>
+          </div>
+        </div>
+        <div class="hint-text" id="editor-reminder"></div>
+        <div class="sheet-actions">
+          <button type="submit" class="btn primary">保存</button>
+          <button type="button" class="btn ghost" id="toggle-done">完成</button>
+          <button type="button" class="btn danger" id="delete-task" hidden>删除</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3 id="settings-title">设置</h3>
+
+      <div class="settings-block">
+        <h4>通知</h4>
+        <p id="notify-status">正在检查通知权限…</p>
+        <div class="sheet-actions">
+          <button type="button" class="btn primary" id="btn-request-notify">允许通知</button>
+          <button type="button" class="btn ghost" id="btn-test-notify">发送测试通知</button>
+        </div>
+      </div>
+
+      <div class="settings-block">
+        <h4>休息时间（可改）</h4>
+        <p>提醒会提前至少 2 小时。若提醒时刻落在休息时段，会再提前到该休息开始前（默认再提前 60 分钟）。时区为上海时间。</p>
+        <div id="rest-editor"></div>
+        <button type="button" class="btn ghost" id="add-rest" style="margin-top:6px">添加休息时段</button>
+        <div class="row-2" style="margin-top:12px">
+          <div class="field" style="margin:0">
+            <label for="lead-hours">提前提醒（小时）</label>
+            <input type="number" id="lead-hours" min="2" max="24" step="1" />
+          </div>
+          <div class="field" style="margin:0">
+            <label for="rest-avoid">避开休息再提前（分钟）</label>
+            <input type="number" id="rest-avoid" min="0" max="180" step="15" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-block">
+        <h4>跨设备同步</h4>
+        <p>两台设备输入同一个同步口令后，任务会通过公共中转（jsonstorage.com，无需注册）互相更新。口令请自行保管；知悉口令的人可以读写这份数据。免费空间会在最后一次写入后约 30 天过期，请定期打开或再点一次生成/上传。也可随时导出/导入备份。</p>
+        <div class="sync-code" id="sync-code">尚未开启</div>
+        <div class="field">
+          <label for="sync-input">输入或粘贴同步口令</label>
+          <input type="text" id="sync-input" placeholder="例如 6 位以上口令" />
+        </div>
+        <div class="sheet-actions">
+          <button type="button" class="btn primary" id="btn-create-sync">生成口令并上传</button>
+          <button type="button" class="btn ghost" id="btn-join-sync">用口令同步</button>
+        </div>
+        <div class="sheet-actions">
+          <button type="button" class="btn ghost" id="btn-export">导出备份</button>
+          <button type="button" class="btn ghost" id="btn-import">导入备份</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden />
+        </div>
+        <p class="hint-text" id="sync-status"></p>
+      </div>
+
+      <div class="settings-block help">
+        <h4>如何添加到主屏幕并收到提醒</h4>
+        <p><b>电脑（推荐 Chrome / Edge）</b></p>
+        <ol>
+          <li>用 Chrome 或 Edge 打开本页（必须是 HTTPS）。</li>
+          <li>点击地址栏右侧的「安装」或「添加到桌面」图标。</li>
+          <li>在弹窗中允许通知。也可在本页点「允许通知」，再点「发送测试通知」检查。</li>
+        </ol>
+        <p><b>小米手机（含 17 Pro Max / HyperOS）</b></p>
+        <ol>
+          <li>用 <b>Chrome</b> 打开本页（系统浏览器对 PWA 通知支持较弱）。</li>
+          <li>右上角菜单 →「添加到主屏幕」或「安装应用」，确认添加。</li>
+          <li>从主屏幕图标打开工作台，点「允许通知」，并发送一条测试通知。</li>
+          <li>如没有横幅或声音：打开系统「设置」→「通知与控制中心」/「通知」→ 找到 Chrome 或「工作台」→ 打开通知、横幅、锁屏通知、声音。</li>
+          <li>建议在「设置 → 应用设置 → 应用管理 → Chrome（或工作台）」里把省电策略设为「无限制」，并允许自启动，避免被杀掉后无法提醒。</li>
+        </ol>
+        <p>无法提供官方小米 Mi Push。后台提醒依赖浏览器能力：页面打开时最稳；已添加到主屏幕的 Android Chrome 可能通过周期后台同步补提醒；若浏览器支持 Notification Triggers 也会提前排期。进程被系统强制冻结时，仍可能漏提醒。请以测试通知验证本机是否真正弹出。</p>
+      </div>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="save-settings">保存设置</button>
+        <button type="button" class="btn ghost" id="close-settings">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="confirm" role="dialog" aria-modal="true" hidden>
+    <div class="sheet confirm-box">
+      <h3 id="confirm-title">确认</h3>
+      <p id="confirm-text"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn danger" id="confirm-ok">删除</button>
+        <button type="button" class="btn ghost" id="confirm-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="./js/shared.js"></script>
+  <script src="./js/sortable.min.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
