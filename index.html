@@ -101,6 +101,23 @@
         </div>
       </div>
 
+      <div class="filters mobile-only" id="filters">
+        <button type="button" class="filter active" data-filter="todo">待办<em id="f-todo">0</em></button>
+        <button type="button" class="filter" data-filter="all">全部<em id="f-all">0</em></button>
+        <button type="button" class="filter" data-filter="done">已完成<em id="f-done">0</em></button>
+      </div>
+
+      <button type="button" class="quick" id="quick-add">
+        <span class="plus">+</span>
+        <span>记下刚布置的任务，主题会自动压到 10 个字以内</span>
+      </button>
+
+      <div class="sec-head">
+        <h2 id="list-heading">按优先级排列</h2>
+        <span id="list-hint">按住左侧拖动排序</span>
+      </div>
+      <div class="list" id="task-list"></div>
+
       <div class="cal-card" id="calendar">
         <div class="cal-head">
           <h2 id="cal-month-label">月历</h2>
@@ -120,23 +137,6 @@
         <div class="cal-grid" id="cal-grid" role="grid" aria-label="月历"></div>
         <div class="cal-agenda" id="cal-agenda-mobile"></div>
       </div>
-
-      <div class="filters mobile-only" id="filters">
-        <button type="button" class="filter active" data-filter="todo">待办<em id="f-todo">0</em></button>
-        <button type="button" class="filter" data-filter="all">全部<em id="f-all">0</em></button>
-        <button type="button" class="filter" data-filter="done">已完成<em id="f-done">0</em></button>
-      </div>
-
-      <button type="button" class="quick" id="quick-add">
-        <span class="plus">+</span>
-        <span>记下刚布置的任务，主题会自动压到 10 个字以内</span>
-      </button>
-
-      <div class="sec-head">
-        <h2 id="list-heading">按优先级排列</h2>
-        <span id="list-hint">按住左侧拖动排序</span>
-      </div>
-      <div class="list" id="task-list"></div>
     </section>
 
     <aside class="rail">

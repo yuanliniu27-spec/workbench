@@ -312,10 +312,11 @@
         return `<span class="cal-chip c-${colorOnDay(t, date)}${doneCls}" data-id="${esc(t.id)}">${esc(hm)} ${esc(t.title)}</span>`;
       }).join("");
       const more = items.length > maxChips ? `<div class="cal-more">+${items.length - maxChips}</div>` : "";
-      const aria = `${cell.m}月${cell.d}日${items.length ? `，${items.length} 项安排` : ""}${date === today ? "，今天" : ""}`;
+      const aria = `${cell.m}月${cell.d}日${items.length ? `，${items.length} 项安排` : ""}${date === today ? "，今天" : ""}，点击可添加日程`;
 
       return `<div class="${classes.join(" ")}" role="button" tabindex="0" data-date="${date}" aria-label="${esc(aria)}" aria-pressed="${date === calSelected ? "true" : "false"}">
         <span class="num">${cell.d}</span>
+        <button type="button" class="cal-add" data-add-date="${date}" aria-label="${esc(`在${cell.m}月${cell.d}日添加日程`)}">+</button>
         <span class="cal-dots">${dots}</span>
         <span class="cal-events">${chips}${more}</span>
       </div>`;
@@ -623,7 +624,12 @@
       : `将在 ${when} 提醒（开始/完成时间提前 ${state.settings.reminderLeadHours} 小时）。`;
   }
 
-  function openEditor(task) {
+  function openNewOnDate(dateStr) {
+    selectCalDate(dateStr);
+    openEditor(null, { date: dateStr, time: "10:00", durationMin: 60 });
+  }
+
+  function openEditor(task, preset) {
     const isNew = !task;
     els.editorTitle.textContent = isNew ? "记下任务" : "编辑任务";
     els.taskId.value = task ? task.id : "";
@@ -639,6 +645,10 @@
       const p = WB.shanghaiParts(new Date());
       els.dueDate.value = `${p.year}-${WB.pad(p.month)}-${WB.pad(p.day)}`;
       els.dueTime.value = "";
+    } else if (preset && preset.date) {
+      els.pending.checked = false;
+      els.dueDate.value = preset.date;
+      els.dueTime.value = preset.time || "10:00";
     } else {
       els.pending.checked = false;
       const later = new Date(Date.now() + 3 * 3600 * 1000);
@@ -646,7 +656,7 @@
       els.dueDate.value = `${p.year}-${WB.pad(p.month)}-${WB.pad(p.day)}`;
       els.dueTime.value = `${WB.pad(p.hour)}:${WB.pad(p.minute)}`;
     }
-    applyDuration(task ? task.durationMin : 60);
+    applyDuration(task ? task.durationMin : (preset && preset.durationMin) || 60);
     els.deleteTask.hidden = isNew;
     els.toggleDone.hidden = isNew;
     els.toggleDone.textContent = task && task.done ? "取消完成" : "完成";
@@ -1421,8 +1431,14 @@
         if (task) openEditor(task);
         return;
       }
+      const addBtn = evt.target.closest(".cal-add[data-add-date]");
+      if (addBtn) {
+        evt.preventDefault();
+        openNewOnDate(addBtn.getAttribute("data-add-date"));
+        return;
+      }
       const day = evt.target.closest(".cal-day[data-date]");
-      if (day) selectCalDate(day.getAttribute("data-date"));
+      if (day) openNewOnDate(day.getAttribute("data-date"));
     };
     $("#calendar").addEventListener("click", onCalInteract);
     els.calAgendaDesk.addEventListener("click", onCalInteract);
@@ -1430,7 +1446,7 @@
       const day = evt.target.closest?.(".cal-day[data-date]");
       if (day && (evt.key === "Enter" || evt.key === " ")) {
         evt.preventDefault();
-        selectCalDate(day.getAttribute("data-date"));
+        openNewOnDate(day.getAttribute("data-date"));
       }
     });
 
