@@ -163,6 +163,22 @@
     return `${taskId}:${at.getTime()}`;
   }
 
+
+  function dateKey(date) {
+    const p = shanghaiParts(date || new Date());
+    return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+  }
+
+  function weekdayIndexFromKey(dateStr) {
+    const [y, m, d] = String(dateStr || "").split("-").map(Number);
+    if (!y || !m || !d) return 0;
+    return new Date(Date.UTC(y, m - 1, d, 4, 0, 0)).getUTCDay();
+  }
+
+  function weekdayNameFromKey(dateStr) {
+    return ["日", "一", "二", "三", "四", "五", "六"][weekdayIndexFromKey(dateStr)];
+  }
+
   function formatDueLabel(iso, now) {
     if (!iso) return "待定";
     const due = new Date(iso);
@@ -418,6 +434,9 @@
     DEFAULT_REST_AVOID_MIN,
     BACKUP_KEY,
     pad,
+    dateKey,
+    weekdayIndexFromKey,
+    weekdayNameFromKey,
     shanghaiParts,
     fromShanghai,
     atHmOnDay,

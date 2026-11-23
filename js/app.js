@@ -8,6 +8,9 @@
   let timers = [];
   let saveQueue = Promise.resolve();
   let deferredPrompt = null;
+  let calViewYear = null;
+  let calViewMonth = null;
+  let calSelected = null;
   let syncTimer = null;
   let pushing = false;
   let lastOpen = { editor: false, settings: false };
@@ -23,9 +26,14 @@
     listHint: $("#list-hint"),
     sampleBanner: $("#sample-banner"),
     notifyBanner: $("#notify-banner"),
-    installBanner: $("#install-banner"),
     remindList: $("#remind-list"),
-    timeline: $("#timeline-list"),
+    calGrid: $("#cal-grid"),
+    calMonthLabel: $("#cal-month-label"),
+    calToday: $("#cal-today"),
+    calAgendaMobile: $("#cal-agenda-mobile"),
+    calAgendaDesk: $("#cal-agenda-desk"),
+    installBar: $("#install-bar"),
+    installGuide: $("#install-guide"),
     restSummary: $("#rest-summary"),
     editor: $("#editor"),
     settings: $("#settings"),
@@ -128,6 +136,243 @@
     }
     const dueLabel = WB.formatDueLabel(task.dueAt, now);
     return `<span class="chip">${esc(dueLabel)} 前提醒 · 计划 ${esc(atLabel)} 推送</span>`;
+  }
+
+
+  const CAL_COLORS = ["teal", "amber", "terra"];
+
+  function todayKey(now) {
+    return WB.dateKey(now || new Date());
+  }
+
+  function ensureCalState(now) {
+    const today = todayKey(now);
+    if (!calSelected) calSelected = today;
+    if (calViewYear == null || calViewMonth == null) {
+      const p = WB.shanghaiParts(now || new Date());
+      calViewYear = p.year;
+      calViewMonth = p.month;
+    }
+  }
+
+  function tasksOnDate(dateStr) {
+    return (state.tasks || [])
+      .filter((t) => t.dueAt && WB.dateKey(new Date(t.dueAt)) === dateStr)
+      .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt) || a.order - b.order);
+  }
+
+  function upcomingDated(now) {
+    const today = todayKey(now);
+    return (state.tasks || [])
+      .filter((t) => t.dueAt && !t.done && WB.dateKey(new Date(t.dueAt)) >= today)
+      .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt) || a.order - b.order);
+  }
+
+  function colorOnDay(task, dateStr) {
+    const items = tasksOnDate(dateStr);
+    const i = items.findIndex((t) => t.id === task.id);
+    return CAL_COLORS[(i < 0 ? 0 : i) % CAL_COLORS.length];
+  }
+
+  function selectCalDate(dateStr) {
+    calSelected = dateStr;
+    const [y, m] = dateStr.split("-").map(Number);
+    calViewYear = y;
+    calViewMonth = m;
+    renderCalendar();
+  }
+
+  function goCalToday() {
+    const now = new Date();
+    const p = WB.shanghaiParts(now);
+    calViewYear = p.year;
+    calViewMonth = p.month;
+    calSelected = todayKey(now);
+    renderCalendar();
+  }
+
+  function shiftCalMonth(delta) {
+    const dt = new Date(Date.UTC(calViewYear, calViewMonth - 1 + delta, 1, 4, 0, 0));
+    calViewYear = dt.getUTCFullYear();
+    calViewMonth = dt.getUTCMonth() + 1;
+    renderCalendar();
+  }
+
+  function agendaItemHTML(task, dateStr) {
+    const p = WB.shanghaiParts(new Date(task.dueAt));
+    const hm = `${WB.pad(p.hour)}:${WB.pad(p.minute)}`;
+    const color = colorOnDay(task, dateStr);
+    const doneCls = task.done ? " done" : "";
+    return `<button type="button" class="agenda-item${doneCls}" data-id="${esc(task.id)}">
+      <div class="hr">${hm}</div>
+      <div class="body c-${color}">
+        <div class="t">${esc(task.title)}</div>
+        <div class="d">${esc(WB.formatDuration(task.durationMin))}</div>
+      </div>
+    </button>`;
+  }
+
+  function renderAgenda(now) {
+    const today = todayKey(now);
+    const selectedItems = tasksOnDate(calSelected);
+    const isToday = calSelected === today;
+    const [, m, d] = calSelected.split("-").map(Number);
+    const dateTitle = `${m}月${d}日 周${WB.weekdayNameFromKey(calSelected)}`;
+
+    let html = "";
+    if (selectedItems.length) {
+      html = `<div class="agenda-head"><h3>${dateTitle}</h3><span>${selectedItems.length} 项安排</span></div>
+        ${selectedItems.map((t) => agendaItemHTML(t, calSelected)).join("")}`;
+    } else if (isToday) {
+      const upcoming = upcomingDated(now);
+      const groups = {};
+      for (const t of upcoming) {
+        const key = WB.dateKey(new Date(t.dueAt));
+        (groups[key] ||= []).push(t);
+      }
+      const blocks = Object.entries(groups).map(([date, items]) => {
+        const [, mm, dd] = date.split("-").map(Number);
+        return `<div class="agenda-group">
+          <button type="button" class="agenda-group-title" data-jump="${date}">${mm}月${dd}日 周${WB.weekdayNameFromKey(date)} · ${items.length} 项</button>
+          ${items.map((t) => agendaItemHTML(t, date)).join("")}
+        </div>`;
+      }).join("");
+      html = `<div class="agenda-head"><h3>今天暂无排期</h3></div>
+        <div class="agenda-empty">未写时间的待办仍在下方列表里。${upcoming.length ? "下面是近几日已排期的任务。" : ""}</div>
+        ${blocks}`;
+    } else {
+      html = `<div class="agenda-head"><h3>${dateTitle}</h3><span>暂无排期</span></div>
+        <div class="agenda-empty">这一天还没有填写开始/完成时间的任务。</div>`;
+    }
+    if (els.calAgendaMobile) els.calAgendaMobile.innerHTML = html;
+    if (els.calAgendaDesk) els.calAgendaDesk.innerHTML = html;
+  }
+
+  function renderCalendar() {
+    if (!state || !els.calGrid) return;
+    const now = new Date();
+    ensureCalState(now);
+    const today = todayKey(now);
+    els.calMonthLabel.textContent = `${calViewYear}年${calViewMonth}月`;
+
+    const first = `${calViewYear}-${WB.pad(calViewMonth)}-01`;
+    const offset = (WB.weekdayIndexFromKey(first) + 6) % 7;
+    const daysInMonth = new Date(Date.UTC(calViewYear, calViewMonth, 0, 4, 0, 0)).getUTCDate();
+    const prevMonth = calViewMonth === 1 ? 12 : calViewMonth - 1;
+    const prevYear = calViewMonth === 1 ? calViewYear - 1 : calViewYear;
+    const daysInPrev = new Date(Date.UTC(prevYear, prevMonth, 0, 4, 0, 0)).getUTCDate();
+    const nextMonth = calViewMonth === 12 ? 1 : calViewMonth + 1;
+    const nextYear = calViewMonth === 12 ? calViewYear + 1 : calViewYear;
+
+    const cells = [];
+    for (let i = 0; i < offset; i += 1) {
+      cells.push({ y: prevYear, m: prevMonth, d: daysInPrev - offset + 1 + i, outside: true });
+    }
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      cells.push({ y: calViewYear, m: calViewMonth, d, outside: false });
+    }
+    let trail = 1;
+    while (cells.length % 7 !== 0) {
+      cells.push({ y: nextYear, m: nextMonth, d: trail, outside: true });
+      trail += 1;
+    }
+
+    els.calGrid.classList.toggle("weeks-6", cells.length > 35);
+    els.calGrid.innerHTML = cells.map((cell) => {
+      const date = `${cell.y}-${WB.pad(cell.m)}-${WB.pad(cell.d)}`;
+      const items = tasksOnDate(date);
+      const classes = ["cal-day"];
+      if (cell.outside) classes.push("outside");
+      if (date === today) classes.push("today");
+      if (date === calSelected) classes.push("selected");
+      if (items.length) classes.push("has-events");
+
+      const dots = items
+        .slice(0, 4)
+        .map((t) => `<span class="cal-dot c-${colorOnDay(t, date)}"></span>`)
+        .join("");
+      const maxChips = 2;
+      const chips = items.slice(0, maxChips).map((t) => {
+        const p = WB.shanghaiParts(new Date(t.dueAt));
+        const hm = `${WB.pad(p.hour)}:${WB.pad(p.minute)}`;
+        const doneCls = t.done ? " done" : "";
+        return `<span class="cal-chip c-${colorOnDay(t, date)}${doneCls}" data-id="${esc(t.id)}">${esc(hm)} ${esc(t.title)}</span>`;
+      }).join("");
+      const more = items.length > maxChips ? `<div class="cal-more">+${items.length - maxChips}</div>` : "";
+      const aria = `${cell.m}月${cell.d}日${items.length ? `，${items.length} 项安排` : ""}${date === today ? "，今天" : ""}`;
+
+      return `<div class="${classes.join(" ")}" role="button" tabindex="0" data-date="${date}" aria-label="${esc(aria)}" aria-pressed="${date === calSelected ? "true" : "false"}">
+        <span class="num">${cell.d}</span>
+        <span class="cal-dots">${dots}</span>
+        <span class="cal-events">${chips}${more}</span>
+      </div>`;
+    }).join("");
+
+    const todayParts = WB.shanghaiParts(now);
+    els.calToday.hidden =
+      calViewYear === todayParts.year &&
+      calViewMonth === todayParts.month &&
+      calSelected === today;
+
+    renderAgenda(now);
+  }
+
+  function isStandalone() {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  function shouldShowInstallBar() {
+    if (!els.installBar) return false;
+    if (isStandalone()) return false;
+    if (window.matchMedia("(min-width: 900px)").matches) return false;
+    try {
+      if (sessionStorage.getItem("wb-install-bar-dismiss") === "1") return false;
+    } catch (err) {
+      /* ignore */
+    }
+    return true;
+  }
+
+  function syncInstallBar() {
+    if (!els.installBar) return;
+    const show = shouldShowInstallBar();
+    els.installBar.hidden = !show;
+    document.body.classList.toggle("has-install-bar", show);
+  }
+
+  async function onInstallBarTap() {
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        if (choice.outcome === "accepted") {
+          toast("已开始添加，完成后可从主屏幕打开");
+          try {
+            sessionStorage.setItem("wb-install-bar-dismiss", "1");
+          } catch (err) {
+            /* ignore */
+          }
+        }
+        syncInstallBar();
+        return;
+      } catch (err) {
+        deferredPrompt = null;
+      }
+    }
+    openOverlay(els.installGuide);
+  }
+
+  function dismissInstallBar() {
+    try {
+      sessionStorage.setItem("wb-install-bar-dismiss", "1");
+    } catch (err) {
+      /* ignore */
+    }
+    syncInstallBar();
   }
 
   function render() {
@@ -238,24 +483,9 @@
         .join("");
     }
 
-    const slots = WB.dueTodayTimeline(state, now);
-    if (!slots.length) {
-      els.timeline.innerHTML = `<p class="hint-text">今天还没有排定开始/完成时间的任务。</p>`;
-    } else {
-      els.timeline.innerHTML = slots
-        .map((task, i) => {
-          const p = WB.shanghaiParts(new Date(task.dueAt));
-          const hm = `${WB.pad(p.hour)}:${WB.pad(p.minute)}`;
-          const barCls = i === 0 ? "" : i === 1 ? " b2" : " b3";
-          return `<div class="slot">
-            <div class="hr">${hm}</div>
-            <div class="bar${barCls}">${esc(task.title)}<small>开始/完成时间</small></div>
-          </div>`;
-        })
-        .join("");
-    }
-
+    renderCalendar();
     updateNotifyBanner();
+    syncInstallBar();
     setupSortable();
   }
 
@@ -316,6 +546,7 @@
     closeOverlay(els.editor);
     closeOverlay(els.settings);
     closeOverlay(els.confirm);
+    if (els.installGuide) closeOverlay(els.installGuide);
   }
 
   function updateTitleCount() {
@@ -596,13 +827,6 @@
     return Notification.permission;
   }
 
-  function isStandalone() {
-    return (
-      window.matchMedia("(display-mode: standalone)").matches ||
-      window.navigator.standalone === true
-    );
-  }
-
   function updateNotifyStatus() {
     const p = permissionState();
     const sw = "serviceWorker" in navigator;
@@ -623,18 +847,7 @@
     const p = permissionState();
     const dismissed = sessionStorage.getItem("wb-notify-dismiss") === "1";
     els.notifyBanner.hidden = !(p === "default" && !dismissed);
-    const instDismissed = localStorage.getItem("wb-install-dismiss") === "1";
-    const canInstall = !!deferredPrompt && !isStandalone() && !instDismissed;
-    const showTip = !isStandalone() && !instDismissed && !deferredPrompt && p !== "unsupported";
-    if (canInstall) {
-      els.installBanner.hidden = false;
-      $("#install-btn").textContent = "添加";
-    } else if (showTip) {
-      els.installBanner.hidden = false;
-      $("#install-btn").textContent = "查看步骤";
-    } else {
-      els.installBanner.hidden = true;
-    }
+    syncInstallBar();
   }
 
   async function requestNotify() {
@@ -972,19 +1185,38 @@
       sessionStorage.setItem("wb-notify-dismiss", "1");
       els.notifyBanner.hidden = true;
     });
-    $("#install-btn").addEventListener("click", async () => {
-      if (deferredPrompt) {
-        deferredPrompt.prompt();
-        await deferredPrompt.userChoice;
-        deferredPrompt = null;
-        updateNotifyBanner();
-      } else {
-        openSettings();
-      }
+    $("#install-bar-main").addEventListener("click", onInstallBarTap);
+    $("#install-bar-dismiss").addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      dismissInstallBar();
     });
-    $("#dismiss-install").addEventListener("click", () => {
-      localStorage.setItem("wb-install-dismiss", "1");
-      els.installBanner.hidden = true;
+    $("#install-guide-ok").addEventListener("click", () => closeOverlay(els.installGuide));
+    $("#cal-prev").addEventListener("click", () => shiftCalMonth(-1));
+    $("#cal-next").addEventListener("click", () => shiftCalMonth(1));
+    $("#cal-today").addEventListener("click", goCalToday);
+    const onCalInteract = (evt) => {
+      const jump = evt.target.closest("[data-jump]");
+      if (jump) {
+        selectCalDate(jump.getAttribute("data-jump"));
+        return;
+      }
+      const openEl = evt.target.closest("[data-id]");
+      if (openEl && (openEl.classList.contains("cal-chip") || openEl.classList.contains("agenda-item"))) {
+        const task = state.tasks.find((t) => t.id === openEl.dataset.id);
+        if (task) openEditor(task);
+        return;
+      }
+      const day = evt.target.closest(".cal-day[data-date]");
+      if (day) selectCalDate(day.getAttribute("data-date"));
+    };
+    $("#calendar").addEventListener("click", onCalInteract);
+    els.calAgendaDesk.addEventListener("click", onCalInteract);
+    $("#calendar").addEventListener("keydown", (evt) => {
+      const day = evt.target.closest?.(".cal-day[data-date]");
+      if (day && (evt.key === "Enter" || evt.key === " ")) {
+        evt.preventDefault();
+        selectCalDate(day.getAttribute("data-date"));
+      }
     });
 
     els.list.addEventListener("click", (evt) => {
@@ -1070,7 +1302,7 @@
       if (file) importBackup(file);
     });
 
-    [els.editor, els.settings, els.confirm].forEach((ov) => {
+    [els.editor, els.settings, els.confirm, els.installGuide].forEach((ov) => {
       ov.addEventListener("click", (evt) => {
         if (evt.target === ov) closeOverlay(ov);
       });
@@ -1094,7 +1326,23 @@
       evt.preventDefault();
       deferredPrompt = evt;
       updateNotifyBanner();
+      syncInstallBar();
     });
+    window.addEventListener("appinstalled", () => {
+      deferredPrompt = null;
+      try {
+        sessionStorage.setItem("wb-install-bar-dismiss", "1");
+      } catch (err) {
+        /* ignore */
+      }
+      syncInstallBar();
+      toast("已添加到主屏幕，可从图标打开工作台");
+    });
+    window.addEventListener("resize", syncInstallBar);
+    const standaloneMq = window.matchMedia("(display-mode: standalone)");
+    if (standaloneMq.addEventListener) {
+      standaloneMq.addEventListener("change", syncInstallBar);
+    }
   }
 
   async function registerSW() {

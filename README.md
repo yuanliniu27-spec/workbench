@@ -1,6 +1,6 @@
 # 工作台
 
-可在电脑和手机使用的备忘与提醒应用（H5 / PWA）。界面为中文，时区为 Asia/Shanghai（上海时间）。
+可在电脑和手机使用的备忘与提醒应用（H5 / PWA）。界面为中文，时区为 Asia/Shanghai（上海时间）。任务可按「开始/完成时间」显示在月历上；手机端可从顶部浮条添加到主屏幕，作为独立应用打开。
 
 本地路径：`/workspace/workbench-app/`
 
@@ -22,7 +22,7 @@ python3 -m http.server 8765
 ```bash
 cd /workspace/workbench-app
 git init
-git add index.html css js sw.js manifest.webmanifest icons README.md
+git add index.html css js sw.js manifest.webmanifest icons README.md .nojekyll
 git commit -m "发布工作台"
 # 在 GitHub 新建公开仓库，例如 workbench，然后：
 git branch -M main

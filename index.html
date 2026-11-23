@@ -16,6 +16,28 @@
   <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
+
+  <div class="install-bar" id="install-bar" hidden>
+    <button type="button" class="install-bar-main" id="install-bar-main">
+      <span class="install-bar-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 17v-6"></path>
+          <path d="M9 14h6"></path>
+          <path d="M4 10.5L12 4l8 6.5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9.5z"></path>
+        </svg>
+      </span>
+      <span class="install-bar-text">
+        <b>添加到主屏幕</b>
+        <span>提醒更稳，也能当独立应用打开</span>
+      </span>
+    </button>
+    <button type="button" class="install-bar-dismiss" id="install-bar-dismiss" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18"></path>
+      </svg>
+    </button>
+  </div>
+
   <div class="app" id="app">
     <aside class="side">
       <div class="brand">工作台</div>
@@ -70,12 +92,24 @@
         </div>
       </div>
 
-      <div class="install-banner" id="install-banner" hidden>
-        <div><b>添加到主屏幕</b>后，提醒更稳，也能当独立应用打开。</div>
-        <div class="banner-actions">
-          <button type="button" class="mini-btn" id="install-btn">添加</button>
-          <button type="button" class="mini-btn ghost" id="dismiss-install">好的</button>
+      <div class="cal-card" id="calendar">
+        <div class="cal-head">
+          <h2 id="cal-month-label">月历</h2>
+          <div class="cal-nav">
+            <button type="button" class="cal-today-btn" id="cal-today" hidden>今天</button>
+            <button type="button" class="icon-btn sm" id="cal-prev" aria-label="上个月">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <button type="button" class="icon-btn sm" id="cal-next" aria-label="下个月">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
         </div>
+        <div class="cal-weekdays" aria-hidden="true">
+          <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+        </div>
+        <div class="cal-grid" id="cal-grid" role="grid" aria-label="月历"></div>
+        <div class="cal-agenda" id="cal-agenda-mobile"></div>
       </div>
 
       <div class="filters mobile-only" id="filters">
@@ -97,12 +131,11 @@
     </section>
 
     <aside class="rail">
+      <div class="desk-agenda">
+        <div class="cal-agenda" id="cal-agenda-desk"></div>
+      </div>
       <h2>即将提醒</h2>
       <div id="remind-list"></div>
-      <div class="timeline">
-        <h2>今日时间安排</h2>
-        <div id="timeline-list"></div>
-      </div>
     </aside>
   </div>
 
@@ -124,7 +157,7 @@
             <input type="date" id="due-date" />
             <input type="time" id="due-time" />
           </div>
-          <div class="hint-text">这是同一个时间，不是开始和完成两个时间。按上海时间填写。</div>
+          <div class="hint-text">这是同一个时间，不是开始和完成两个时间。按上海时间填写。只有填写了具体时间的任务会出现在日历上。</div>
         </div>
         <div class="field">
           <label>预计耗时</label>
@@ -238,6 +271,18 @@
       <div class="sheet-actions">
         <button type="button" class="btn danger" id="confirm-ok">删除</button>
         <button type="button" class="btn ghost" id="confirm-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="overlay" id="install-guide" role="dialog" aria-modal="true" aria-labelledby="install-guide-title" hidden>
+    <div class="sheet confirm-box">
+      <div class="sheet-handle"></div>
+      <h3 id="install-guide-title">添加到主屏幕</h3>
+      <p>请用 Chrome 打开本页，点右上角菜单，再选「添加到主屏幕」或「安装应用」。添加后从主屏幕图标打开，即可作为独立应用使用，现有任务操作都和现在一样。</p>
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="install-guide-ok">好的</button>
       </div>
     </div>
   </div>
