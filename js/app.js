@@ -13,7 +13,18 @@
   let calSelected = null;
   let syncTimer = null;
   let pushing = false;
+  let pulling = false;
+  let pushQueued = false;
+  let pushRetryTimer = null;
+  let pullRetryTimer = null;
+  let pushRetryAttempt = 0;
+  let pullRetryAttempt = 0;
+  let syncCreateFailed = false;
   let lastOpen = { editor: false, settings: false };
+  const SYNC_PUSH_DEBOUNCE = 400;
+  const SYNC_POLL_MS = 12 * 1000;
+  const SYNC_RETRY_DELAYS = [2000, 5000, 15000, 30000];
+  const SYNC_HINT_KEY = "wb-sync-link-hint-dismiss";
 
   const els = {
     list: $("#task-list"),
@@ -56,6 +67,8 @@
     syncCode: $("#sync-code"),
     syncInput: $("#sync-input"),
     syncStatus: $("#sync-status"),
+    syncBanner: $("#sync-banner"),
+    retrySync: $("#retry-sync"),
     notifyStatus: $("#notify-status"),
     leadHours: $("#lead-hours"),
     restAvoid: $("#rest-avoid"),
@@ -417,6 +430,7 @@
 
     const samples = state.tasks.some((t) => t.isSample && !t.done);
     els.sampleBanner.hidden = !samples;
+    updateSyncBanner();
 
     const periods = state.settings.restPeriods || [];
     const lines = periods.map((p) => {
@@ -727,6 +741,7 @@
     const ok = await askConfirm(`删除「${task ? task.title : "该任务"}」？此操作不可恢复。`, "删除");
     if (!ok) return;
     await persist((s) => {
+      s.deletedIds = WB.addDeletedIds(s.deletedIds, [id]);
       s.tasks = s.tasks.filter((t) => t.id !== id);
     });
     closeOverlay(els.editor);
@@ -754,6 +769,8 @@
     const ok = await askConfirm("删除全部仍保留的示例任务？你自己记下的任务不会受影响。", "删除示例");
     if (!ok) return;
     await persist((s) => {
+      const ids = s.tasks.filter((t) => t.isSample).map((t) => t.id);
+      s.deletedIds = WB.addDeletedIds(s.deletedIds, ids);
       s.tasks = s.tasks.filter((t) => !t.isSample);
       s.seeded = false;
     });
@@ -796,10 +813,9 @@
     els.leadHours.value = String(state.settings.reminderLeadHours);
     els.restAvoid.value = String(state.settings.restAvoidMinutes);
     renderRestEditor();
-    els.syncCode.textContent = formatSyncCode(state.sync && state.sync.blobId, state.sync && state.sync.token) || "尚未开启";
     els.syncInput.value = formatSyncCode(state.sync && state.sync.blobId, state.sync && state.sync.token) || "";
     updateNotifyStatus();
-    updateSyncStatus();
+    refreshSyncFields();
     openOverlay(els.settings);
   }
 
@@ -815,6 +831,7 @@
       s.settings.reminderLeadHours = lead;
       s.settings.restAvoidMinutes = avoid;
       s.settings.restPeriods = periods;
+      s.settingsUpdatedAt = Date.now();
     });
     render();
     toast("设置已保存");
@@ -961,15 +978,7 @@
   const SYNC_HOST = "https://jsonstorage.com";
 
   function payloadForSync(s) {
-    return {
-      version: 1,
-      settings: s.settings,
-      tasks: s.tasks,
-      notified: s.notified,
-      updatedAt: s.updatedAt,
-      createdAt: s.createdAt,
-      seeded: s.seeded
-    };
+    return WB.syncPayload(s);
   }
 
   function parseSyncCode(code) {
@@ -982,6 +991,61 @@
   function formatSyncCode(id, key) {
     if (!id) return "";
     return key ? `${id}#${key}` : id;
+  }
+
+  function currentSyncLink() {
+    const id = state.sync && state.sync.blobId;
+    const key = state.sync && state.sync.token;
+    return WB.formatSyncLink(id, key);
+  }
+
+  function hintDismissed() {
+    try {
+      return localStorage.getItem(SYNC_HINT_KEY) === "1" || sessionStorage.getItem(SYNC_HINT_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function dismissSyncHint() {
+    try {
+      sessionStorage.setItem(SYNC_HINT_KEY, "1");
+      localStorage.setItem(SYNC_HINT_KEY, "1");
+    } catch (err) {
+      /* ignore */
+    }
+    updateSyncBanner();
+  }
+
+  function updateSyncBanner() {
+    if (!els.syncBanner) return;
+    const hasSpace = !!(state.sync && state.sync.blobId && state.sync.token);
+    const failed = syncCreateFailed && !hasSpace && WB.hasRealTasks(state);
+    const showReady = hasSpace && !hintDismissed();
+    const show = failed || showReady;
+    els.syncBanner.hidden = !show;
+    if (els.retrySync) els.retrySync.hidden = !failed;
+    const text = $("#sync-banner-text");
+    if (text) {
+      text.textContent = failed
+        ? "未能自动开启跨设备同步，本机任务仍可用。可点重试，或稍后再到设置里开启。"
+        : "用这条同步链接在另一台打开，之后两边改动会自动对齐。链接请自行保管。";
+    }
+  }
+
+  async function copySyncLink() {
+    const link = currentSyncLink();
+    if (!link) {
+      toast("请先记下一条任务以自动开启同步，或在设置里生成口令");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("已复制同步链接");
+    } catch (err) {
+      toast("请到设置里手动复制同步链接");
+      openSettings();
+    }
   }
 
   async function syncCreate(s) {
@@ -1000,7 +1064,7 @@
     const res = await fetch(`${SYNC_HOST}/${encodeURIComponent(id)}`, {
       headers: { Accept: "application/json" }
     });
-    if (res.status === 404) throw new Error("找不到这个同步口令");
+    if (res.status === 404) throw new Error("找不到这个同步空间，可能已过期，请重新生成链接");
     if (!res.ok) throw new Error("读取同步数据失败");
     return res.json();
   }
@@ -1023,122 +1087,269 @@
     const id = state.sync && state.sync.blobId;
     const when = state.sync && state.sync.updatedAt;
     const parts = [];
-    if (id) parts.push("已连接同步口令。点击口令可复制。");
-    else parts.push("尚未开启同步。也可只用导出/导入在两台设备间拷贝。");
+    if (id) parts.push("已开启自动同步。改动会尽快同步到另一台已接入的设备。点击口令或「复制同步链接」可分享到另一台。");
+    else parts.push("尚未开启同步。记下任务后会尝试自动开启；也可手动生成口令，或只用导出/导入拷贝。");
     if (when) parts.push(`最近同步：${WB.formatShortDateTime(new Date(when))}。`);
     if (extra) parts.push(extra);
-    els.syncStatus.textContent = parts.join(" ");
+    if (els.syncStatus) els.syncStatus.textContent = parts.join(" ");
+  }
+
+  function refreshSyncFields() {
+    const code = formatSyncCode(state.sync && state.sync.blobId, state.sync && state.sync.token);
+    if (els.syncCode) els.syncCode.textContent = code || "尚未开启";
+    if (els.syncInput && !els.syncInput.value) els.syncInput.value = code || "";
+    updateSyncStatus();
+    updateSyncBanner();
+  }
+
+  function retryDelay(attempt) {
+    return SYNC_RETRY_DELAYS[Math.min(attempt, SYNC_RETRY_DELAYS.length - 1)];
   }
 
   function queueSyncPush() {
-    if (!state.sync || !state.sync.blobId) return;
+    if (!state.sync || !state.sync.blobId) {
+      maybeAutoCreateSync();
+      return;
+    }
     clearTimeout(queueSyncPush._t);
-    queueSyncPush._t = setTimeout(() => pushSync().catch(() => {}), 1600);
+    queueSyncPush._t = setTimeout(() => {
+      pushSync().catch(() => {});
+    }, SYNC_PUSH_DEBOUNCE);
+  }
+
+  function schedulePushRetry() {
+    clearTimeout(pushRetryTimer);
+    const delay = retryDelay(pushRetryAttempt);
+    pushRetryAttempt += 1;
+    pushRetryTimer = setTimeout(() => {
+      pushSync().catch(() => {});
+    }, delay);
+  }
+
+  function schedulePullRetry() {
+    clearTimeout(pullRetryTimer);
+    const delay = retryDelay(pullRetryAttempt);
+    pullRetryAttempt += 1;
+    pullRetryTimer = setTimeout(() => {
+      pullSync(true).catch(() => {});
+    }, delay);
   }
 
   async function pushSync() {
-    if (!state.sync || !state.sync.blobId || pushing) return;
+    if (!state.sync || !state.sync.blobId) return;
+    if (!state.sync.token) {
+      updateSyncStatus("缺少写入密钥，请用同步链接或完整口令重新接入。本机改动已保留。");
+      return;
+    }
+    if (pushing) {
+      pushQueued = true;
+      return;
+    }
     pushing = true;
     try {
+      await saveQueue;
       await syncPut(state.sync.blobId, state.sync.token, state);
+      pushRetryAttempt = 0;
+      clearTimeout(pushRetryTimer);
       await persist((s) => {
+        if (!s.sync) s.sync = {};
+        s.sync.blobId = state.sync.blobId;
+        s.sync.token = state.sync.token;
         s.sync.updatedAt = Date.now();
       }, { skipSync: true, touch: false });
-      updateSyncStatus("已上传到同步空间。");
+      updateSyncStatus("已自动同步到另一台设备。");
     } catch (err) {
-      updateSyncStatus("上传失败，将保留在本机。也可改用导出备份。");
+      schedulePushRetry();
+      updateSyncStatus("同步上传失败，将自动重试。本机改动已保留。");
     } finally {
       pushing = false;
+      if (pushQueued) {
+        pushQueued = false;
+        queueSyncPush();
+      }
     }
   }
 
   async function pullSync(silent) {
     if (!state.sync || !state.sync.blobId) return;
+    if (pulling) return;
+    pulling = true;
     try {
+      await saveQueue;
       const remote = await syncGet(state.sync.blobId);
+      await saveQueue;
+      pullRetryAttempt = 0;
+      clearTimeout(pullRetryTimer);
       if (!remote || !Array.isArray(remote.tasks)) return;
-      if ((remote.updatedAt || 0) > (state.updatedAt || 0)) {
-        state = await WB.saveState(
-          Object.assign({}, WB.normalizeState(remote), {
-            sync: { blobId: state.sync.blobId, updatedAt: Date.now() }
-          })
-        );
+      const merged = WB.applyPulledState(state, remote);
+      const changed = WB.payloadsDiffer(state, merged);
+      const needPush = WB.payloadsDiffer(merged, remote);
+      if (changed) {
+        state = await WB.saveState(merged, { touch: false });
         render();
         scheduleReminders();
-        if (!silent) toast("已从同步口令更新");
-        updateSyncStatus("已从同步空间拉取最新任务。");
-      } else if ((state.updatedAt || 0) > (remote.updatedAt || 0) + 500) {
-        await pushSync();
+        if (!silent) toast("已与另一台设备同步");
+        updateSyncStatus("已从另一台设备更新。");
       } else {
-        updateSyncStatus("本机与同步空间已一致。");
+        state.sync.updatedAt = Date.now();
+        updateSyncStatus("本机与另一台设备已一致。");
       }
+      if (needPush) queueSyncPush();
     } catch (err) {
+      schedulePullRetry();
       if (!silent) toast(err.message || "同步失败");
-      updateSyncStatus(err.message || "同步失败");
+      updateSyncStatus((err.message || "同步失败") + "，将自动重试。本机数据已保留。");
+    } finally {
+      pulling = false;
+    }
+  }
+
+  async function applyCreatedSync(created, toastMsg) {
+    syncCreateFailed = false;
+    await persist((s) => {
+      s.sync = { blobId: created.id, token: created.key, updatedAt: Date.now() };
+    }, { skipSync: true, touch: false });
+    if (els.syncInput) els.syncInput.value = formatSyncCode(created.id, created.key);
+    refreshSyncFields();
+    ensureSyncLoop();
+    queueSyncPush();
+    if (toastMsg) toast(toastMsg);
+    updateSyncStatus("把同步链接或口令用到另一台设备，之后两边会自动对齐。");
+  }
+
+  async function maybeAutoCreateSync() {
+    if (!state || (state.sync && state.sync.blobId)) return;
+    if (!WB.hasRealTasks(state)) return;
+    if (maybeAutoCreateSync._busy) return;
+    maybeAutoCreateSync._busy = true;
+    try {
+      const created = await syncCreate(state);
+      await applyCreatedSync(created, "已自动开启同步，可复制链接到另一台设备");
+    } catch (err) {
+      syncCreateFailed = true;
+      updateSyncBanner();
+      updateSyncStatus("自动开启同步失败，可稍后重试。本机任务仍可用。");
+    } finally {
+      maybeAutoCreateSync._busy = false;
     }
   }
 
   async function createSync() {
     try {
-      els.syncStatus.textContent = "正在生成同步口令…";
+      if (els.syncStatus) els.syncStatus.textContent = "正在生成同步口令…";
       const created = await syncCreate(state);
       const code = formatSyncCode(created.id, created.key);
-      await persist((s) => {
-        s.sync = { blobId: created.id, token: created.key, updatedAt: Date.now() };
-      });
-      els.syncCode.textContent = code;
-      els.syncInput.value = code;
+      await applyCreatedSync(created, null);
       try {
         await navigator.clipboard.writeText(code);
         toast("已生成并复制同步口令");
       } catch (err) {
         toast("已生成同步口令，请手动复制");
       }
-      ensureSyncLoop();
-      updateSyncStatus("把这串口令输入到另一台设备即可共享同一套任务。");
     } catch (err) {
-      toast("无法开启在线同步，请改用导出/导入");
-      updateSyncStatus("在线同步暂不可用（公共中转未能连通）。请使用导出/导入备份。");
+      syncCreateFailed = true;
+      updateSyncBanner();
+      toast("无法开启在线同步，请稍后重试，或改用导出/导入");
+      updateSyncStatus("在线同步暂不可用（公共中转未能连通）。本机任务仍可用，也可使用导出/导入备份。");
     }
   }
 
+  function clearSyncHash() {
+    try {
+      if (!location.hash || location.hash.indexOf("sync=") === -1) return;
+      history.replaceState(null, "", location.pathname + location.search);
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  async function connectSync(parsed, opts) {
+    const options = opts || {};
+    if (!parsed || !parsed.id) throw new Error("请先输入同步口令或打开同步链接");
+    if (state.sync && state.sync.blobId === parsed.id) {
+      if (parsed.key && state.sync.token !== parsed.key) {
+        await persist((s) => {
+          s.sync.token = parsed.key;
+        }, { skipSync: true, touch: false });
+      }
+      ensureSyncLoop();
+      await pullSync(!options.quiet);
+      return "same";
+    }
+    const remote = await syncGet(parsed.id);
+    if (!remote || !Array.isArray(remote.tasks)) throw new Error("同步内容无法识别");
+    const sparse = WB.isSparseState(state);
+    if (!sparse && WB.hasRealTasks(state) && !options.skipConfirm) {
+      const ok = await askConfirm(
+        "将把本机已有任务与另一台设备合并同步。同一条任务以较新的为准；已删除的不会被加回来。确定接入？",
+        "开始同步"
+      );
+      if (!ok) return "cancel";
+    }
+    let local = state;
+    if (sparse) {
+      local = Object.assign({}, state, {
+        tasks: (state.tasks || []).filter((t) => !t.isSample),
+        seeded: false
+      });
+    }
+    const merged = WB.mergeStates(local, remote);
+    merged.sync = { blobId: parsed.id, token: parsed.key || (state.sync && state.sync.token) || "", updatedAt: Date.now() };
+    state = await WB.saveState(merged);
+    if (els.syncInput) els.syncInput.value = formatSyncCode(parsed.id, parsed.key);
+    render();
+    scheduleReminders();
+    refreshSyncFields();
+    ensureSyncLoop();
+    queueSyncPush();
+    return "joined";
+  }
+
   async function joinSync() {
-    const parsed = parseSyncCode(els.syncInput.value);
+    const parsed = parseSyncCode(els.syncInput && els.syncInput.value);
     if (!parsed.id) {
       toast("请先输入同步口令");
       return;
     }
     try {
-      const remote = await syncGet(parsed.id);
-      if (!remote || !Array.isArray(remote.tasks)) throw new Error("口令内容无法识别");
-      const ok = await askConfirm(
-        "用这个口令同步会覆盖本机当前任务（可用导出先备份）。确定继续？",
-        "开始同步"
-      );
-      if (!ok) return;
-      state = await WB.saveState(
-        Object.assign({}, WB.normalizeState(remote), {
-          sync: { blobId: parsed.id, token: parsed.key, updatedAt: Date.now() }
-        })
-      );
-      els.syncCode.textContent = formatSyncCode(parsed.id, parsed.key);
-      render();
-      scheduleReminders();
-      toast("已接入同步");
-      ensureSyncLoop();
-      updateSyncStatus("已从同步口令拉取任务。之后两台设备会尽量自动对齐。");
+      const result = await connectSync(parsed);
+      if (result === "cancel") return;
+      if (result === "same") {
+        toast("已接入同一同步空间");
+        updateSyncStatus("已是同一同步空间，正在自动对齐。");
+        return;
+      }
+      toast("已接入同步，之后会自动对齐");
+      updateSyncStatus("已接入同步空间。之后两台设备会自动对齐。");
     } catch (err) {
       toast(err.message || "同步失败");
       updateSyncStatus(err.message || "同步失败");
     }
   }
 
+  async function consumeSyncHash() {
+    const parsed = WB.parseSyncHash(typeof location !== "undefined" ? location.hash : "");
+    if (!parsed) return;
+    clearSyncHash();
+    try {
+      const result = await connectSync(parsed);
+      if (result === "cancel") return;
+      if (result === "same") {
+        toast("已接入同一同步空间");
+        return;
+      }
+      toast("已接入同步，之后会自动对齐");
+    } catch (err) {
+      toast(err.message || "无法用这个同步链接接入");
+      updateSyncStatus(err.message || "同步链接接入失败");
+    }
+  }
 
   function ensureSyncLoop() {
     if (!state.sync || !state.sync.blobId) return;
     pullSync(true);
     if (syncTimer) return;
-    syncTimer = setInterval(() => pullSync(true), 60 * 1000);
+    syncTimer = setInterval(() => pullSync(true), SYNC_POLL_MS);
   }
 
   function exportBackup() {
@@ -1160,9 +1371,13 @@
       const ok = await askConfirm("导入会覆盖本机当前任务。确定继续？", "导入");
       if (!ok) return;
       const keepSync = state.sync;
-      state = await WB.saveState(
-        Object.assign({}, WB.normalizeState(data), { sync: keepSync })
-      );
+      const incoming = WB.normalizeState(data);
+      const newIds = new Set((incoming.tasks || []).map((t) => t.id));
+      const dropped = (state.tasks || []).map((t) => t.id).filter((id) => !newIds.has(id));
+      incoming.deletedIds = WB.addDeletedIds(incoming.deletedIds, dropped);
+      incoming.sync = keepSync;
+      incoming.settingsUpdatedAt = incoming.settingsUpdatedAt || Date.now();
+      state = await WB.saveState(incoming);
       render();
       scheduleReminders();
       queueSyncPush();
@@ -1294,6 +1509,21 @@
     });
     $("#btn-create-sync").addEventListener("click", createSync);
     $("#btn-join-sync").addEventListener("click", joinSync);
+    const copyLinkBtn = $("#btn-copy-sync-link");
+    if (copyLinkBtn) copyLinkBtn.addEventListener("click", copySyncLink);
+    const bannerCopy = $("#copy-sync-link");
+    if (bannerCopy) bannerCopy.addEventListener("click", copySyncLink);
+    const bannerDismiss = $("#dismiss-sync-banner");
+    if (bannerDismiss) bannerDismiss.addEventListener("click", dismissSyncHint);
+    if (els.retrySync) {
+      els.retrySync.addEventListener("click", () => {
+        syncCreateFailed = false;
+        if (state.sync && state.sync.blobId) queueSyncPush();
+        else maybeAutoCreateSync().then(() => {
+          if (syncCreateFailed) toast("仍无法开启同步，请稍后重试");
+        });
+      });
+    }
     $("#btn-export").addEventListener("click", exportBackup);
     $("#btn-import").addEventListener("click", () => $("#import-file").click());
     $("#import-file").addEventListener("change", (evt) => {
@@ -1321,6 +1551,14 @@
     window.addEventListener("focus", () => {
       checkDueReminders();
       pullSync(true);
+    });
+    window.addEventListener("pageshow", () => {
+      checkDueReminders();
+      pullSync(true);
+    });
+    window.addEventListener("online", () => {
+      pullSync(true);
+      if (state.sync && state.sync.blobId) queueSyncPush();
     });
     window.addEventListener("beforeinstallprompt", (evt) => {
       evt.preventDefault();
@@ -1367,12 +1605,15 @@
     state = existing || WB.defaultState();
     if (!existing) await WB.saveState(state);
     render();
+    await consumeSyncHash();
+    await maybeAutoCreateSync();
     await registerSW();
     scheduleReminders();
     setInterval(checkDueReminders, 30 * 1000);
     ensureSyncLoop();
     updateNotifyBanner();
     updateNotifyStatus();
+    updateSyncBanner();
   }
 
   init().catch((err) => {

@@ -1,7 +1,7 @@
 /* 工作台 Service Worker：缓存、后台检查、可选 Notification Triggers */
 importScripts("./js/shared.js");
 
-const CACHE = "workbench-v2";
+const CACHE = "workbench-v3";
 const ASSETS = [
   "./",
   "./index.html",

@@ -291,6 +291,8 @@
       tasks: seedTasks(new Date()),
       notified: {},
       sync: { blobId: null, token: null, updatedAt: 0 },
+      deletedIds: [],
+      settingsUpdatedAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       seeded: true
@@ -382,10 +384,183 @@
       tasks: Array.isArray(src.tasks) ? src.tasks : [],
       notified: src.notified && typeof src.notified === "object" ? src.notified : {},
       sync: Object.assign({ blobId: null, token: null, updatedAt: 0 }, src.sync || {}),
+      deletedIds: Array.isArray(src.deletedIds) ? src.deletedIds.filter(Boolean).map(String) : [],
+      settingsUpdatedAt: Number(src.settingsUpdatedAt) || 0,
       createdAt: src.createdAt || Date.now(),
       updatedAt: src.updatedAt || Date.now(),
       seeded: !!src.seeded
     };
+  }
+
+  function taskStamp(task) {
+    if (!task) return 0;
+    return Number(task.updatedAt) || Number(task.completedAt) || Number(task.createdAt) || 0;
+  }
+
+  function hasRealTasks(state) {
+    return ((state && state.tasks) || []).some((t) => t && !t.isSample);
+  }
+
+  function isSparseState(state) {
+    const tasks = (state && state.tasks) || [];
+    return !tasks.length || tasks.every((t) => t && t.isSample);
+  }
+
+  function addDeletedIds(list, ids, cap) {
+    const limit = cap == null ? 400 : cap;
+    const out = [];
+    const seen = new Set();
+    const incoming = []
+      .concat(list || [])
+      .concat(ids || [])
+      .map((id) => (id == null ? "" : String(id)))
+      .filter(Boolean);
+    for (let i = incoming.length - 1; i >= 0; i--) {
+      const id = incoming[i];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.unshift(id);
+    }
+    return out.length > limit ? out.slice(out.length - limit) : out;
+  }
+
+  function keepLocalSync(local, incoming) {
+    const loc = (local && local.sync) || {};
+    const src = (incoming && incoming.sync) || {};
+    return {
+      blobId: loc.blobId || src.blobId || null,
+      token: loc.token || src.token || null,
+      updatedAt: Number(loc.updatedAt) || Number(src.updatedAt) || 0
+    };
+  }
+
+  function pickSettings(local, remote) {
+    const locAt = Number(local && local.settingsUpdatedAt) || 0;
+    const remAt = Number(remote && remote.settingsUpdatedAt) || 0;
+    if (remAt > locAt) {
+      return { settings: remote.settings, settingsUpdatedAt: remAt };
+    }
+    if (locAt > remAt) {
+      return { settings: local.settings, settingsUpdatedAt: locAt };
+    }
+    const locJson = JSON.stringify((local && local.settings) || {});
+    const remJson = JSON.stringify((remote && remote.settings) || {});
+    if (locJson === remJson) {
+      return { settings: local.settings, settingsUpdatedAt: locAt };
+    }
+    if ((Number(remote && remote.updatedAt) || 0) > (Number(local && local.updatedAt) || 0)) {
+      return { settings: remote.settings, settingsUpdatedAt: remAt || Number(remote.updatedAt) || 0 };
+    }
+    return { settings: local.settings, settingsUpdatedAt: locAt };
+  }
+
+  function mergeStates(local, remote) {
+    const loc = normalizeState(local);
+    const rem = normalizeState(remote);
+    const deletedIds = addDeletedIds(loc.deletedIds, rem.deletedIds);
+    const deleted = new Set(deletedIds);
+    const byId = new Map();
+    for (const task of loc.tasks || []) {
+      if (!task || !task.id || deleted.has(String(task.id))) continue;
+      byId.set(String(task.id), task);
+    }
+    for (const task of rem.tasks || []) {
+      if (!task || !task.id) continue;
+      const id = String(task.id);
+      if (deleted.has(id)) continue;
+      const existing = byId.get(id);
+      if (!existing || taskStamp(task) > taskStamp(existing)) {
+        byId.set(id, task);
+      }
+    }
+    const tasks = Array.from(byId.values());
+    const picked = pickSettings(loc, rem);
+    const notified = Object.assign({}, rem.notified || {}, loc.notified || {});
+    return normalizeState({
+      version: 1,
+      settings: picked.settings,
+      settingsUpdatedAt: picked.settingsUpdatedAt,
+      tasks,
+      notified,
+      deletedIds,
+      sync: keepLocalSync(loc, rem),
+      createdAt: loc.createdAt || rem.createdAt,
+      updatedAt: Math.max(Number(loc.updatedAt) || 0, Number(rem.updatedAt) || 0),
+      seeded: hasRealTasks({ tasks }) ? false : !!(loc.seeded || rem.seeded)
+    });
+  }
+
+  function syncPayload(state) {
+    const n = normalizeState(state);
+    return {
+      version: 1,
+      settings: n.settings,
+      settingsUpdatedAt: n.settingsUpdatedAt || 0,
+      tasks: n.tasks,
+      notified: n.notified,
+      deletedIds: n.deletedIds || [],
+      updatedAt: n.updatedAt,
+      createdAt: n.createdAt,
+      seeded: n.seeded
+    };
+  }
+
+  function payloadFingerprint(state) {
+    const p = syncPayload(state);
+    const tasks = (p.tasks || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const deletedIds = (p.deletedIds || []).slice().sort();
+    return JSON.stringify({
+      settings: p.settings,
+      settingsUpdatedAt: p.settingsUpdatedAt,
+      tasks,
+      notified: p.notified,
+      deletedIds,
+      seeded: p.seeded
+    });
+  }
+
+  function payloadsDiffer(a, b) {
+    return payloadFingerprint(a) !== payloadFingerprint(b);
+  }
+
+  const CANONICAL_SYNC_BASE = "https://yuanliniu27-spec.github.io/workbench/";
+
+  function syncPageBase() {
+    return CANONICAL_SYNC_BASE;
+  }
+
+  function applyPulledState(local, remote) {
+    const merged = mergeStates(local, remote);
+    const loc = (local && local.sync) || {};
+    merged.sync = {
+      blobId: loc.blobId || (merged.sync && merged.sync.blobId) || null,
+      token: loc.token || (merged.sync && merged.sync.token) || null,
+      updatedAt: Date.now()
+    };
+    return merged;
+  }
+
+  function formatSyncLink(id, key, base) {
+    if (!id || !key) return "";
+    const root = String(base || syncPageBase()).replace(/\/?$/, "/");
+    return root + "#sync=" + encodeURIComponent(id) + "/" + encodeURIComponent(key);
+  }
+
+  function parseSyncHash(hash) {
+    const raw = String(hash || "").replace(/^#/, "");
+    const idx = raw.indexOf("sync=");
+    if (idx === -1) return null;
+    const body = raw.slice(idx + 5);
+    const slash = body.indexOf("/");
+    if (slash === -1) return null;
+    try {
+      const id = decodeURIComponent(body.slice(0, slash)).trim();
+      const key = decodeURIComponent(body.slice(slash + 1)).trim();
+      if (!id) return null;
+      return { id, key };
+    } catch (err) {
+      return null;
+    }
   }
 
   function upcomingReminders(state, now, limit) {
@@ -463,6 +638,20 @@
     loadState,
     saveState,
     normalizeState,
+    taskStamp,
+    hasRealTasks,
+    isSparseState,
+    addDeletedIds,
+    keepLocalSync,
+    mergeStates,
+    syncPayload,
+    payloadFingerprint,
+    payloadsDiffer,
+    CANONICAL_SYNC_BASE,
+    syncPageBase,
+    formatSyncLink,
+    parseSyncHash,
+    applyPulledState,
     upcomingReminders,
     dueTodayTasks,
     dueTodayTimeline,

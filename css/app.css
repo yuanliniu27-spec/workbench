@@ -90,7 +90,7 @@ img { max-width: 100%; }
 .stat.warn { background: var(--terra-soft); border-color: #efd0c6; color: var(--terra); }
 .stat.warn b { color: var(--terra); }
 
-.banner, .sample-banner, .install-banner, .notify-banner {
+.banner, .sample-banner, .install-banner, .notify-banner, .sync-banner {
   background: rgba(255,255,255,.5);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -106,7 +106,10 @@ img { max-width: 100%; }
   justify-content: space-between;
   gap: 10px;
 }
-.sample-banner b, .notify-banner b, .install-banner b { color: var(--ink); font-weight: 700; }
+.sample-banner b, .notify-banner b, .install-banner b, .sync-banner b { color: var(--ink); font-weight: 700; }
+.sync-banner {
+  background: rgba(255,255,255,.42);
+}
 .banner-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .mini-btn {
   border-radius: 999px;
@@ -529,7 +532,8 @@ img { max-width: 100%; }
   }
   .main .desk-hero { order: 0; }
   .main .sample-banner,
-  .main .notify-banner { order: 1; }
+  .main .notify-banner,
+  .main .sync-banner { order: 1; }
   .main .quick { order: 2; }
   .main .cal-card { order: 3; }
   .main .sec-head { order: 4; }
